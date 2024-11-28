@@ -1,2 +1,0 @@
-RosAdapter
--DCATKIN_DEVEL_PREFIX=/home/saimo/SimPro_wzs/SimPro_Code_ros/devel -DCMAKE_INSTALL_PREFIX=/home/saimo/SimPro_wzs/SimPro_Code_ros/install -G Unix Makefiles
