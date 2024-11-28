@@ -1,8 +1,0 @@
-prefix=/home/saimo/SimPro_wzs/SimPro_Code_ros/devel
-
-Name: RosAdapter
-Description: Description of RosAdapter
-Version: 0.0.0
-Cflags: -I/home/saimo/SimPro_wzs/SimPro_Code_ros/devel/include
-Libs: -L${prefix}/lib 
-Requires: roscpp rospy std_msgs message_generation message_runtime
