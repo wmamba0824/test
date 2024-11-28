@@ -1,0 +1,26 @@
+<launch>
+  <!-- args -->
+  <arg name="ip" value="127.0.0.1" />
+  <arg name="port" value="8000" />
+  <arg name="connType" value="1" />  <!-- 连接类型 0:TCP 1：UDP-->
+  <arg name="ControlInLoopValue"  value="1" />  <!-- 控制在环 value[0:OFF 1:ON] type[1:动力学模型挂载内部 2:动力学模型挂载外部] -->
+  <arg name="ControlInLoopType"  value="1" />
+  <arg name="AdCtrlEgo"  value="1" />  <!-- AD是否控制主车 默认值为1 0:OFF 1:ON -->
+  <arg name="VehicleDynamicsSelect"  value="1" />  <!-- 1:预期纵向加速度 2:油门开度+制动主缸压力 3:驱动扭矩+预期制动减速度 4:剩余停车距离+最大允许车速+制动类型+档位-->
+  <arg name="VehicleSteeringSelect"  value="1" />  <!-- 车辆动力学模型横向控制方式 默认值为1 1:方向盘转角 2:方向盘扭矩-->
+
+  <!-- NODE RosAdapter -->
+  <node pkg="RosAdapter" type="RosAdapter_node" name="RosAdapter_node"  output="screen">
+    <param name="ip" value="$(arg ip)" />
+    <param name="port" value="$(arg port)" />
+    <param name="connType" value="$(arg connType)"/>
+    <param name="ControlInLoopValue"  value="$(arg ControlInLoopValue)"/>
+    <param name="ControlInLoopType"  value="$(arg ControlInLoopType)" /> 
+    <param name="AdCtrlEgo"  value="$(arg AdCtrlEgo)" />
+    <param name="ADToSimproTriggerTopic" value="/ADTriggerToSimpro" />  
+    <param name="SimproToADTopic" value="/RosAdapter_node/SimproToAD" />
+    <param name="recvMessageFromAD" value="/RosToSimpro" />
+  </node>
+  <!-- NODE RosAlgorithms -->
+  <node pkg="RosAlgorithm" type="RosAlgorithms.py" name="RosAlgorithms_node" output="screen"/> 
+</launch>
