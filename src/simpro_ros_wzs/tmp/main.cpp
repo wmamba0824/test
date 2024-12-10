@@ -316,6 +316,7 @@ double etd(double vel, double dvel)
     return dis_effect;
 }
 
+
 /**
  * 非控制在环，世界坐标系，需要提供准确数值的数据项：
  * pkgBody->sObjectState.sPos.u8X

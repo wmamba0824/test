@@ -47,29 +47,365 @@ ObjData objData;
 sem_t sem;                                                                           //用于线程同步的信号量
 
 
-void generatePkgCsvData()
+// =================================================================
+//  AD控制主车，动力学挂载内部，内部ACC算法控车
+
+
+/* 函数申明 */
+double get_acc(const double speed);
+double etd(const double vel, const double dvel);
+double getMaxSpeed();
+void get_before_veh(bool & has_veh, double & u4RelativeDist, double & u4RelativeSpeed);
+
+/**
+ * @brief Get the before veh object
+ *
+ * @param has_veh 是否有前车
+ * @param u4RelativeDist 与前车的距离
+ * @param u4RelativeSpeed 与前车的相对速度  (主车的速度 - 前车的速度)
+ */
+void get_before_veh(bool & has_veh, double & u4RelativeDist, double & u4RelativeSpeed)
 {
-    //生成D_SP_PKG_ID_CSV_DATA
+    S_SP_MIL_EGO_STATE      mOwnObject = {0};
+    S_SP_MIL_OBJECT_STATE   mNearestObject[MAX_OBJECT_CNT] = {0};
+
+    double min_dis = 100;
+    int min_index = -1;
+    int _g_mil_object_num = 0;
+
+    objData.mMutex.lock();
+    _g_mil_object_num = objData.g_mil_object_num;
+    objData.mMutex.unlock();
+
+    if (_g_mil_object_num == 0)
+    {
+        has_veh = false;
+        return;
+    }
+
+    if (_g_mil_object_num > MAX_OBJECT_CNT)
+    {
+        _g_mil_object_num = MAX_OBJECT_CNT;
+    }
+
+    objData.mMutex.lock();
+    mOwnObject            = objData.mOwnObject;
+    memcpy(mNearestObject, objData.mNearestObject, _g_mil_object_num * sizeof(S_SP_MIL_OBJECT_STATE));
+    objData.mMutex.unlock();
+
+    /* 主车信息: 速度 */
+    double ownSpeed = sqrt(pow(mOwnObject.sObjectState.sSpeed.u8X, 2) + pow(mOwnObject.sObjectState.sSpeed.u8Y, 2));
+
+    /* 主车信息: 坐标 */
+    double own_x = mOwnObject.sObjectState.sPos.u8X;
+    double own_y = mOwnObject.sObjectState.sPos.u8Y;
+    double own_z = mOwnObject.sObjectState.sPos.u8Z;
+
+    /* 主车信息: 航向角 */
+    double own_h = mOwnObject.sObjectState.sPos.u4H;
+
+    /* 环境车信息: 速度 坐标 航向角 */
+    double obj_speed = 0;
+    double obj_x = 0;
+    double obj_y = 0;
+    double obj_z = 0;
+    double obj_h = 0;
+
+    /**
+     * @brief 查找主车前面的车
+     *        a. 两车的航向角相同
+     *        b. 主车到前车的方向与航向角相同
+     *        以上条件同时满足
+     */
+    for (size_t i = 0; i < _g_mil_object_num; i++)
+    {
+        /* 更新环境车信息 */
+        obj_x = mNearestObject[i].sObjectState.sPos.u8X;
+        obj_y = mNearestObject[i].sObjectState.sPos.u8Y;
+        obj_z = mNearestObject[i].sObjectState.sPos.u8Z;
+
+        obj_h = mNearestObject[i].sObjectState.sPos.u4H;
+
+        /* a. 航向角相差大于45度，标识不在前面 */
+        //求从own_h到obj_h的最小角度变化量
+        //值域调整到(-2PI, 2PI)
+        double output_own = fmod(own_h, 2 * M_PI);
+        double output_obj = fmod(obj_h, 2 * M_PI);
+        //值域调整到[0, 2PI)
+        if (output_own < 0)
+        {
+            output_own += 2 * M_PI;
+        }
+        if (output_obj < 0)
+        {
+            output_obj += 2 * M_PI;
+        }
+        //角度变化量
+        double deltaAngle = output_own - output_obj;
+        //最小角度变化量
+        if (deltaAngle > M_PI)
+        {
+            deltaAngle -= 2 * M_PI;
+        }
+        else if (deltaAngle < -M_PI)
+        {
+            deltaAngle += 2 * M_PI;
+        }
+
+        if (fabs(deltaAngle) > M_PI_4)
+        {
+            continue;
+        }
+
+        /* 不同车道不处理 */
+        if (mOwnObject.sObjectState.u1LaneId != mNearestObject[i].sObjectState.u1LaneId)
+        {
+            continue;
+        }
+
+
+        /* 主车到前车的方向与航向角相同 */
+        double dx = obj_x - own_x;
+        double dy = obj_y - own_y;
+        double dtmp = atan(dy / dx);
+
+        if (dx > 0)                 // 第一、四象限
+        {
+            if (dy < 0)             // 第四象限
+            {
+                dtmp += M_PI * 2;
+            }
+        }
+        else                        // 第二、三象限
+        {
+            dtmp += M_PI;
+        }
+
+        /* 如果连线角度与航向角差 45 度以上，不在同一条线上 */
+        double dtemp_h = fabs(dtmp - own_h);
+        dtemp_h = (dtemp_h > M_PI) ? (M_PI * 2 - dtemp_h) : dtemp_h;
+        if (dtemp_h > M_PI_4)
+        {
+            continue;
+        }
+
+        /* 主车前面的车辆 */
+        // s 坐标获取错误
+        double dis_bef = sqrt(pow(dx, 2) + pow(dy, 2) + pow(own_z - obj_z, 2));
+
+        if (min_dis > dis_bef)
+        {
+            min_dis = dis_bef;
+            min_index = i;
+        }
+    }
+
+    /* 前面无车 */
+    if (min_index < 0)
+    {
+        return;
+    }
+
+    /* 前面有车 */
+    has_veh = true;
+
+    /* 前方车辆速度 */
+    obj_speed = sqrt(pow(mNearestObject[min_index].sObjectState.sSpeed.u8X, 2) + pow(mNearestObject[min_index].sObjectState.sSpeed.u8Y, 2));
+
+    u4RelativeSpeed = ownSpeed - obj_speed;
+    u4RelativeDist = min_dis;
+
+    return;
+}
+
+/**
+ * @brief 获取最大速度
+ *        默认车辆行驶速度为120KM/H
+ * @return double
+ */
+double getMaxSpeed()
+{
+    return 33.333333;
+}
+
+/**
+ * @brief                           Get the acc object
+ *                                  此处须替换成用户的算法
+ *
+ *                                  默认的ACC算法对测试场景的限制：
+ *                                  场景中只能有主车和20个交通车
+ *                                  两车必须在同一条路上
+ *                                  沿s轴正方向行驶
+ *                                  主车在交通车后面
+ *                                  不能进行转向 (缺乏转向功能)
+ * @param speed                     当前车速
+ * @return double                   加速度
+ */
+double get_acc(const double speed)
+{
+    const double min_dis_safery = 2;    // 安全距离
+    const double accMax = 3.0;          // 加速度最大值
+    const double approachFactor = 4.0;
+    const double vehicLength = 4.3;     // 车身长度默认4.3米
+    double acc_temp1 = 0;
+    double acc_temp2 = 0;
+
+    double acc = 0;                     /* 默认返回0 */
+
+    bool has_vel = false;
+    double u4RelativeDist = 100.0;
+    double u4RelativeSpeed = 0.0;
+
+    get_before_veh(has_vel, u4RelativeDist, u4RelativeSpeed);
+
+    /**
+     * @brief 不需要变速的条件:
+     *      a. 距离前车较远;
+     *      b. 当前速度与初始值差不多
+     *      两个条件都满足才不变速
+     */
+    if ((fabs(speed - getMaxSpeed()) < 0.005) && (u4RelativeDist > 200))
+    {
+        return 0.0;
+    }
+
+    // 减去实体长度
+    u4RelativeDist -= vehicLength;
+
+    /* 减去安全距离 */
+    u4RelativeDist -= min_dis_safery;
+
+    // 取作为除数的最小值
+    if (u4RelativeDist < std::numeric_limits<double>::epsilon())
+    {
+        u4RelativeDist = std::numeric_limits<double>::epsilon() * 2;   // dis 最小值做限制
+    }
+
+    // Step2: 计算acc
+    acc_temp1 = accMax * (1 - pow((speed / getMaxSpeed()), approachFactor));
+    acc_temp2 = acc_temp1 - accMax * (pow(etd(speed, u4RelativeSpeed) / u4RelativeDist, 2.0));
+    acc = (acc_temp1 < acc_temp2) ? acc_temp1 : acc_temp2;
+    acc = (acc < -8) ? -8 : acc;
+    acc = (acc > 6) ? 6 : acc;
+    acc = (acc > accMax) ? accMax : acc;
+
+    return acc;
+}
+
+/**
+ * @brief 输入本实体当前速度和与前方实体的相对速度获取有效停车距离
+ *
+ * @param vel 当前速度
+ * @param dvel 与前方实体的相对速度
+ * @return dis_effect 输出安全距离
+ */
+double etd(double vel, double dvel)
+{
+    const float deltaSmin = 2.0;  // 来自驾驶员模型默认值
+    const float decComf = 1.5;    // 舒适的制动减速度，默认值为1.5
+    const float accMax = 3;       // 车辆驾驶员最大可能的加速度，默认值为3.0
+    const float respTime = 1.4;   // 期望时间间隔
+    const double distanceBetweenCenter2Head = 1.0;  // 实体模型一半的长度 默认为车辆，1米
+
+    double dis_effect = 0;
+
+    if (0 > vel)
+    {
+        return 0;
+    }
+
+    double minDist = deltaSmin + distanceBetweenCenter2Head;
+
+    dis_effect = minDist + respTime * vel + (vel * dvel) / (2 * sqrt(accMax * decComf));
+    dis_effect = (dis_effect > minDist) ? dis_effect : minDist;
+
+    return dis_effect;
+}
+
+
+void generatePkgDriverCtrl()
+{
+
+    //此处须替换成用户的算法
+    double             accelTgt = get_acc(sqrt(pow(objData.mOwnObject.sObjectState.sSpeed.u8X, 2) + pow(objData.mOwnObject.sObjectState.sSpeed.u8Y, 2)));
     S_SP_MSG_ENTRY_HDR *pkghead = (S_SP_MSG_ENTRY_HDR *)(msgBuffer + msgBufferUsedSize);
 
     //填充PKG头部
     pkghead->u4HeaderSize       = sizeof(S_SP_MSG_ENTRY_HDR);
-    pkghead->u4DataSize         = sizeof(S_SP_CSV_DATA);
-    pkghead->u4ElementSize      = sizeof(S_SP_CSV_DATA);
-    pkghead->u2PkgId            = D_SP_PKG_ID_CSV_DATA;
+    pkghead->u4DataSize         = sizeof(S_SP_DRIVER_CTRL);
+    pkghead->u4ElementSize      = sizeof(S_SP_DRIVER_CTRL);
+    pkghead->u2PkgId            = D_SP_PKG_ID_DRIVER_CTRL;
 
-    //填充PKG的body
-    S_SP_CSV_DATA *pkgBody      = (S_SP_CSV_DATA *)(pkghead + 1);
+    //填充PKG body
+    S_SP_DRIVER_CTRL *pkgBody   = (S_SP_DRIVER_CTRL *)(pkghead + 1);
 
-    //测试数据
-    static double testData = 0.0;
-    static int ad_status = 0;
-    testData += 0.1;
-    ad_status++;
+#if 1                                                                                          //使用第一套纵向控制方式
+    // pkgBody->u8AccelTgt         = accelTgt;                                                    //预期目标加速度(m/s2)
+    pkgBody->u8AccelTgt         = 0;                                                    //预期目标加速度(m/s2)
 
-    pkgBody->u4AccelTgt         = testData;                                                    //期望加速度(m/s²)
-    pkgBody->u4SteeringWheel    = testData;                                                    //期望方向盘转角(rad)
-    pkgBody->u4ADStatus         = ad_status;                                                   //AD算法状态
+    std::cout << " acc=" << pkgBody->u8AccelTgt;
+#elif 0                                                                                        //使用第二套纵向控制方式
+    pkgBody->u8ThrottlePedal          = 0.8;                                                   //油门踏板(0~1)
+    pkgBody->u8MasterCylinderPressure = 0;                                                     //制动主缸压力(mpa)
+
+    std::cout << " u8ThrottlePedal=" << pkgBody->u8ThrottlePedal << " u8MasterCylinderPressure=" << pkgBody->u8MasterCylinderPressure;
+#elif 0                                                                                        //使用第三套纵向控制方式
+    pkgBody->u4MtWheel                = 0.0;                                                   //轮端扭矩(N*m)
+    pkgBody->u8AccelTgt               = 0.0;                                                   //期望制动减速度(m/s2),应设置负值
+#else                                                                                          //使用第四套纵向控制方式
+    pkgBody->u8TargetSpeed            = 0.0;                                                   //最大允许车速(km/h)
+    pkgBody->u8StopDistance           = 0.0;                                                   //剩余停车距离(cm)
+    pkgBody->u1Gear                   = D_SP_GEAR_BOX_POS_N;                                   //挡位
+    pkgBody->u1BrkType                = 0;                                                     //制动类型(0=None 1=Comfort 2=Emergence)
+#endif
+
+#if 1                                                                                          //使用第一套横向控制方式
+    pkgBody->u8SteeringWheel          = 0.0;                                                   //方向盘转角(弧度)
+
+    std::cout << " u8SteeringWheel=" << pkgBody->u8SteeringWheel << std::endl;
+#else                                                                                          //使用第二套横向控制方式
+    pkgBody->u8SteeringTorque         = 0.0;                                                   //方向盘扭矩(N*m)
+
+    std::cout << " u8SteeringTorque=" << pkgBody->u8SteeringTorque << std::endl;
+#endif
+
+    msgBufferUsedSize += pkghead->u4HeaderSize + pkghead->u4DataSize;                          //更新msgBuffer的已使用空间
+}
+
+
+void generatePkgEgoData()
+{
+    bool bLeftLightStatus       = false;                                                       //左转向灯状态
+    bool bRinghtLightStatus     = false;                                                       //右转向灯状态
+    S_SP_MSG_ENTRY_HDR *pkghead = (S_SP_MSG_ENTRY_HDR *)(msgBuffer + msgBufferUsedSize);
+
+    //填充PKG头部
+    pkghead->u4HeaderSize       = sizeof(S_SP_MSG_ENTRY_HDR);
+    pkghead->u4DataSize         = sizeof(S_SP_MIL_EGO_STATE);
+    pkghead->u4ElementSize      = sizeof(S_SP_MIL_EGO_STATE);
+    pkghead->u2PkgId            = D_SP_MIL_PKG_ID_EGO_DATA;
+
+    //填充PKG body
+    S_SP_MIL_EGO_STATE *pkgBody = (S_SP_MIL_EGO_STATE *)(pkghead + 1);
+
+    pkgBody->sObjectState.u4Id  = 1;                                                           //主车Id为1
+    strcpy(pkgBody->sObjectState.au1Name, "Ego");
+    // strcpy(pkgBody->sObjectState.au1Name, "test");
+
+
+    pkgBody->u4LightMask        = 0;
+
+    //如果左转向灯亮
+    if (bLeftLightStatus)
+    {
+        pkgBody->u4LightMask    = pkgBody->u4LightMask | D_SP_VEHICLE_LIGHT_INDICATOR_L;
+    }
+
+    //如果右转向灯亮
+    if (bRinghtLightStatus)
+    {
+        pkgBody->u4LightMask    = pkgBody->u4LightMask | D_SP_VEHICLE_LIGHT_INDICATOR_R;
+    }
 
     msgBufferUsedSize           += pkghead->u4HeaderSize + pkghead->u4DataSize;                //更新msgBuffer的已使用空间
 }
@@ -77,7 +413,7 @@ void generatePkgCsvData()
 void generatePkgEgoData1()
 {
     bool bLeftLightStatus                = false;                                             //左转向灯状态
-    bool bRinghtLightStatus              = false;                                             //右转向灯状态
+    bool bRightLightStatus              = false;                                             //右转向灯状态
 
     //生成S_SP_MIL_EGO_STATE
     S_SP_MSG_ENTRY_HDR *pkghead          = (S_SP_MSG_ENTRY_HDR *)(msgBuffer + msgBufferUsedSize);
@@ -89,7 +425,7 @@ void generatePkgEgoData1()
     pkghead->u2PkgId                     = D_SP_MIL_PKG_ID_EGO_DATA;
 
     //填充PKG body
-    S_SP_MIL_EGO_STATE *pkgBody          = (S_SP_MIL_EGO_STATE *)(pkghead + 1);
+    S_SP_MIL_EGO_STATE *pkgBody          = (S_SP_MIL_EGO_STATE *)(pkghead + 1); //pkghead+1 表示在 pkghead 指向的内存地址基础上向前移动一个 pkghead 结构体大小的空间
 
     //线速度与角速度
     pkgBody->sObjectState.sSpeed.u8X     = 0.0;                                               //Ego->getDu();
@@ -117,15 +453,18 @@ void generatePkgEgoData1()
     pkgBody->sObjectState.sGeo.u4OffZ    = 0.0;
 
     // 世界坐标
-    pkgBody->sObjectState.sPos.u8X       = -2110;
-    pkgBody->sObjectState.sPos.u8Y       = -5296;
-    pkgBody->sObjectState.sPos.u8Z       = 12;
-    pkgBody->sObjectState.sPos.u4H       = 1.6;
+    pkgBody->sObjectState.sPos.u8X       = -124;
+    pkgBody->sObjectState.sPos.u8Y       = 60;
+    pkgBody->sObjectState.sPos.u8Z       = 0;
+    pkgBody->sObjectState.sPos.u4H       = 0;
     pkgBody->sObjectState.sPos.u4P       = 0.0;
     pkgBody->sObjectState.sPos.u4R       = 0.0;
     pkgBody->sObjectState.sPos.u1Type    = D_SP_COORDINATE_TYPE_GEO;
 
+
     pkgBody->u4LightMask                 = 0;
+
+    pkgBody->u4initSpeed                 = 10;
 
     //如果左转向灯亮
     if (bLeftLightStatus)
@@ -134,16 +473,10 @@ void generatePkgEgoData1()
     }
 
     //如果右转向灯亮
-    if (bRinghtLightStatus)
+    if (bRightLightStatus)
     {
         pkgBody->u4LightMask             = pkgBody->u4LightMask | D_SP_VEHICLE_LIGHT_INDICATOR_R;
     }
-
-    // pkgBody->u4WheelSpeedFL           = ;
-    // pkgBody->u4WheelSpeedFR           = ;
-    // pkgBody->u4WheelSpeedRL           = ;
-    // pkgBody->u4WheelSpeedRR           = ;
-    // pkgBody->u4MasterCylinderPressure = ;
 
     msgBufferUsedSize                   += pkghead->u4HeaderSize + pkghead->u4DataSize;     //更新msgBuffer的已使用空间
 }
@@ -206,6 +539,10 @@ void generateMsg()
     {
         // 非控制在环
         generatePkgEgoData1();
+
+        // 控制在环，动力学挂载内部
+        // generatePkgEgoData();
+        // generatePkgDriverCtrl();
 
         // // //生成csv数据
         // generatePkgCsvData();
