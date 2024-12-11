@@ -8,7 +8,7 @@
 #include <ifaddrs.h>
 #include <stdlib.h>
 
-using namespace std;
+using namespace std;    
 
 namespace RosAdapter
 {
@@ -34,12 +34,12 @@ namespace RosAdapter
             msgBufferAllocSize = 0;
         }
 
-        // std::string ADToSimproTriggerTopic;
-        // nh_.getParam("ADToSimproTriggerTopic", ADToSimproTriggerTopic); // 获取launch文件中字段为ADToSimproTriggerTopic的值（订阅trigger的topic）
-        // trigger_ = nh_.subscribe(ADToSimproTriggerTopic, 1000, &RosSimproAD::sendTriggerToSimpro, this);
+        std::string ADToSimproTriggerTopic;
+        nh_.getParam("ADToSimproTriggerTopic", ADToSimproTriggerTopic); // 获取launch文件中字段为ADToSimproTriggerTopic的值（订阅trigger的topic）
+        trigger_ = nh_.subscribe(ADToSimproTriggerTopic, 1000, &RosSimproAD::sendTriggerToSimpro, this);
 
         // wzs
-        sendTriggerToSimpro();
+        // sendTriggerToSimpro();
         
         cout << "connType=" << connType << endl;
 
@@ -147,7 +147,7 @@ namespace RosAdapter
         return;
     }
 
-/*
+
     void RosSimproAD::sendTriggerToSimpro(const rosADToSimproTrigger::ConstPtr &triggerMsg)
     {
         std::cout << "RosSimproAD::sendTriggerToSimpro" << std::endl;
@@ -156,50 +156,6 @@ namespace RosAdapter
 
         // 将rosADToSimproTrigger数据转换成package结构类型数据
         generateHeadMsg(triggerMsg->head);
-        generateTrigger();
-        generateEndMsg();
-
-        // 发送trigger数据给Simpro
-        if (connType == 1)  // UDP connection
-        {
-            // 向服务器发送数据包
-            if ((sendLen = sendto(client_sockfd, msgBuffer, msgBufferUsedSize, 0, (struct sockaddr *)&remote_addr, sizeof(struct sockaddr))) < 0) // 返回发送的数据长度，出错返回-1
-            {
-                perror("send error!");
-                return;
-            }
-        }
-
-        if (connType == 0)  // TCP connection
-        {
-            std::cout << "tcp send trigger" << std::endl;
-            // 向服务器发送数据包
-            if ((sendLen = send(client_sockfd, msgBuffer, msgBufferUsedSize, 0)) < 0) // 返回发送的数据长度，出错返回-1
-            {
-                perror("send error!");
-                return;
-            }
-        }
-        std::cout << "send trigger end" << std::endl;
-
-        // 触发Simpro运行后，可以接收Simpro发送的数据
-        recvMessage();
-
-        // 由于当前场景已经开始运行，因此结束当前场景的订阅
-        //  trigger_.shutdown();
-
-        std::cout << "RosSimproAD::sendTriggerToSimpro() end" << std::endl;
-    }
-*/
-
-    void RosSimproAD::sendTriggerToSimpro()
-    {
-        std::cout << " ****** sendTriggerToSimpro ****** " << std::endl;
-
-        int sendLen;
-
-        // 将rosADToSimproTrigger数据转换成package结构类型数据
-        generateHeadMsg();
         generateTrigger();
         generateEndMsg();
 
@@ -257,8 +213,6 @@ namespace RosAdapter
 
         remote_addr.sin_addr.s_addr = inet_addr(ip.c_str()); //服务器IP地址
         remote_addr.sin_port = htons(port); // 服务器端口号
-
-
 
         nh_.getParam("connType", connType); // 获取通信类型，UPD/TCP
         std::cout << "connType=" << connType << std::endl;
@@ -1045,8 +999,8 @@ namespace RosAdapter
                         nh_.getParam("ADToSimproTriggerTopic", ADToSimproTriggerTopic); // 获取launch文件中字段为ADToSimproTriggerTopic的值（订阅trigger的topic）
                         
                         // wzs
-                        // trigger_ = nh_.subscribe(ADToSimproTriggerTopic, 1000, &RosSimproAD::sendTriggerToSimpro, this);
-                        sendTriggerToSimpro();
+                        trigger_ = nh_.subscribe(ADToSimproTriggerTopic, 1000, &RosSimproAD::sendTriggerToSimpro, this);
+                        // sendTriggerToSimpro();
                     }
                     pkgData += 1;
                 }
@@ -1854,8 +1808,8 @@ namespace RosAdapter
         std::cout << "RosSimproAD::sendObjToSimpro start" << std::endl;
         int sendLen;
         // std::cout << "sendObjToSimpro data = " << objMessage << std::endl;
-        // generateHeadMsg(objMessage->head);
-        generateHeadMsg();
+        generateHeadMsg(objMessage->head);
+        // generateHeadMsg();
 
         generateEgoState(objMessage->egoState);
         generateCsvData(objMessage->csvData);
@@ -1896,8 +1850,8 @@ namespace RosAdapter
         std::cout << "RosSimproAD::sendDriverCtrlToSimpro start" << std::endl;
         int sendLen;
 
-        // generateHeadMsg(driverCtrlMessage->head);
-        generateHeadMsg();
+        generateHeadMsg(driverCtrlMessage->head);
+        // generateHeadMsg();
 
         generateDriverCtrl(driverCtrlMessage->driverCtrl);
         generateEgoState(driverCtrlMessage->egoState);
@@ -1928,7 +1882,7 @@ namespace RosAdapter
         std::cout << "RosSimproAD::sendDriverCtrlToSimpro end" << std::endl;
     }
 
-/*
+
     // 生成package的头部
     void RosSimproAD::generateHeadMsg(const header &head)
     {
@@ -1961,42 +1915,6 @@ namespace RosAdapter
 
         // std::cout << "RosSimproAD::generateHeadMsg end" << std::endl;
     }
-*/
-
-
-    void RosSimproAD::generateHeadMsg()
-    {
-        std::cout << "RosSimproAD::generateHeadMsg start" << std::endl;
-        // 清空msgBuffer
-        memset(msgBuffer, 0, msgBufferAllocSize);
-        msgBufferUsedSize = 0; // 更新msgBuffer的已使用空间
-
-        // 生成Msg头部
-        msgHead1 = (S_SP_MSG_HDR *)msgBuffer;
-
-        // 填充Msg头部
-        msgHead1->u4FrameNo = 100 + 1;
-        msgHead1->u4HeaderSize = sizeof(S_SP_MSG_HDR); // Msg头部大小
-        msgHead1->u4DataSize = 100;        // 帧号
-        msgHead1->u8SimTime = 2.4;          // 仿真时间
-
-        msgBufferUsedSize += sizeof(S_SP_MSG_HDR); // 更新msgBuffer的已使用空间
-
-        // 生成D_SP_PKG_ID_START_FRAME
-        S_SP_MSG_ENTRY_HDR *pkgHead = (S_SP_MSG_ENTRY_HDR *)(msgBuffer + msgBufferUsedSize);
-
-        // 填充PKG头部
-        pkgHead->u4HeaderSize = sizeof(S_SP_MSG_ENTRY_HDR);
-        pkgHead->u2PkgId = D_SP_PKG_ID_START_FRAME;
-        pkgHead->u4DataSize = 0;
-        pkgHead->u4ElementSize = 0;
-
-        msgBufferUsedSize += pkgHead->u4HeaderSize + pkgHead->u4DataSize; // 更新msgBuffer的已使用空间
-
-        // std::cout << "RosSimproAD::generateHeadMsg end" << std::endl;
-    }
-
-
 
     // 生成objectState包
     void RosSimproAD::generateEgoState(const mil_ego_state &objMessage)

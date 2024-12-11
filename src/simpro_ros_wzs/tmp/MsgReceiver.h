@@ -8,7 +8,7 @@
 
 #define USE_UDP_OR_TCP true                                                           // true:使用UDP false:使用TCP
 
-#define USE_CM    false                                                               // true:使用CM端口 false:使用不使用
+#define USE_CM    true                                                               // true:使用CM端口 false:使用不使用
 
 #define RECV_BUF_SIZE 1024 * 1024 * 2
 

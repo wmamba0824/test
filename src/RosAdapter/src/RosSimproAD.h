@@ -163,9 +163,9 @@ namespace RosAdapter
         int parsePackage(char *pkgBuff);
         void packToRos(uint16_t type = 0, char *pdata = nullptr);
         
-        // void generateHeadMsg(const header &head);
+        void generateHeadMsg(const header &head);
 
-        void generateHeadMsg();
+        // void generateHeadMsg();
 
         void generateEndMsg();
         void generateEgoState(const mil_ego_state &objMessage);
@@ -175,9 +175,9 @@ namespace RosAdapter
         void generateV2xWarningInformation(const v2x_warninginformation &v2xWarning);
         void sendDataToAD();
 
-        // void sendTriggerToSimpro(const rosADToSimproTrigger::ConstPtr &triggerMsg);
+        void sendTriggerToSimpro(const rosADToSimproTrigger::ConstPtr &triggerMsg);
 
-        void sendTriggerToSimpro();
+        // void sendTriggerToSimpro();
 
         void sendObjToSimpro(const rosADToSimproEgoState::ConstPtr &objMessage);
         void sendDriverCtrlToSimpro(const rosADToSimproDriverCtrl::ConstPtr &driverCtrlMessage);  

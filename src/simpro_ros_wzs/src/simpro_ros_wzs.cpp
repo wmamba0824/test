@@ -410,7 +410,80 @@ void generatePkgEgoData()
     msgBufferUsedSize           += pkghead->u4HeaderSize + pkghead->u4DataSize;                //更新msgBuffer的已使用空间
 }
 
+
+
+/**
+ * 控制在环(动力学模型挂载外部)，需要提供准确数值的数据项：
+ * pkgBody->sObjectState.sPos.u4H
+ * pkgBody->sObjectState.sSpeed.u4H
+ * pkgBody->sObjectState.sSpeed.u8X
+ * pkgBody->sObjectState.sAccel.u8X
+ * pkgBody->sObjectState.sAccel.u8Y
+ */
 void generatePkgEgoData1()
+{
+    S_SP_MIL_EGO_STATE mOwnObject{0};
+
+    objData.mMutex.lock();
+    mOwnObject = objData.mOwnObject;
+    objData.mMutex.unlock();
+
+    double dt                           = 1.0 / 100.0;                                        //根据设置的帧率多少来计算dt
+    bool bLeftLightStatus               = false;                                             //左转向灯状态
+    bool bRinghtLightStatus             = false;                                             //右转向灯状态
+    double accelTgt                     = get_acc(sqrt(pow(mOwnObject.sObjectState.sSpeed.u8X, 2) + pow(mOwnObject.sObjectState.sSpeed.u8Y, 2))); //此处须替换成用户的算法
+    objData.velo                        = objData.velo + (accelTgt * dt);                    //更新主车速度
+
+    //生成D_SP_MIL_PKG_ID_EGO_DATA
+    S_SP_MSG_ENTRY_HDR *pkghead         = (S_SP_MSG_ENTRY_HDR *)(msgBuffer + msgBufferUsedSize);
+
+    //填充PKG头部
+    pkghead->u4HeaderSize               = sizeof(S_SP_MSG_ENTRY_HDR);
+    pkghead->u4DataSize                 = sizeof(S_SP_MIL_EGO_STATE);
+    pkghead->u4ElementSize              = sizeof(S_SP_MIL_EGO_STATE);
+    pkghead->u2PkgId                    = D_SP_MIL_PKG_ID_EGO_DATA;
+
+    //填充PKG body
+    S_SP_MIL_EGO_STATE *pkgBody         = (S_SP_MIL_EGO_STATE *)(pkghead + 1);
+
+    pkgBody->sObjectState.u4Id          = 1;                                                 //主车Id为1
+    strcpy(pkgBody->sObjectState.au1Name, "Ego");
+
+    //航向角
+    pkgBody->sObjectState.sPos.u4H       = 0.0;
+    pkgBody->sObjectState.sPos.u1Type    = D_SP_COORDINATE_TYPE_GEO;                         //坐标系类型,世界坐标系
+
+    //线速度与角速度
+    pkgBody->sObjectState.sSpeed.u8X     = objData.velo;
+    pkgBody->sObjectState.sSpeed.u4H     = 0.0;
+    pkgBody->sObjectState.sSpeed.u1Type  = D_SP_COORDINATE_TYPE_TRACK;                       //坐标系类型,道路坐标系(x=s, y=t )
+
+    //线加速度与角加速度
+    pkgBody->sObjectState.sAccel.u8X     = accelTgt;
+    pkgBody->sObjectState.sAccel.u8Y     = 0.0;
+    pkgBody->sObjectState.sAccel.u1Type  = D_SP_COORDINATE_TYPE_TRACK;                       //坐标系类型，道路坐标系(x=s, y=t )
+
+    //转向灯
+    pkgBody->u4LightMask                 = 0;
+
+    //如果左转向灯亮
+    if (bLeftLightStatus)
+    {
+        pkgBody->u4LightMask = pkgBody->u4LightMask | D_SP_VEHICLE_LIGHT_INDICATOR_L;
+    }
+
+    //如果右转向灯亮
+    if (bRinghtLightStatus)
+    {
+        pkgBody->u4LightMask             = pkgBody->u4LightMask | D_SP_VEHICLE_LIGHT_INDICATOR_R;
+    }
+
+    msgBufferUsedSize                   += pkghead->u4HeaderSize + pkghead->u4DataSize;      //更新msgBuffer的已使用空间
+}
+
+
+// 非控制在环
+void generatePkgEgoData2()
 {
     bool bLeftLightStatus                = false;                                             //左转向灯状态
     bool bRightLightStatus              = false;                                             //右转向灯状态
@@ -428,7 +501,7 @@ void generatePkgEgoData1()
     S_SP_MIL_EGO_STATE *pkgBody          = (S_SP_MIL_EGO_STATE *)(pkghead + 1); //pkghead+1 表示在 pkghead 指向的内存地址基础上向前移动一个 pkghead 结构体大小的空间
 
     //线速度与角速度
-    pkgBody->sObjectState.sSpeed.u8X     = 0.0;                                               //Ego->getDu();
+    pkgBody->sObjectState.sSpeed.u8X     = 5.0;                                               //Ego->getDu();
     pkgBody->sObjectState.sSpeed.u8Y     = 0.0;                                               //Ego->getDv();
     pkgBody->sObjectState.sSpeed.u8Z     = 0.0;
     pkgBody->sObjectState.sSpeed.u4H     = 0.0;                                               //Ego->getDYaw();//航向角的角速度
@@ -453,7 +526,7 @@ void generatePkgEgoData1()
     pkgBody->sObjectState.sGeo.u4OffZ    = 0.0;
 
     // 世界坐标
-    pkgBody->sObjectState.sPos.u8X       = -124;
+    pkgBody->sObjectState.sPos.u8X       = -100;
     pkgBody->sObjectState.sPos.u8Y       = 60;
     pkgBody->sObjectState.sPos.u8Z       = 0;
     pkgBody->sObjectState.sPos.u4H       = 0;
@@ -461,10 +534,9 @@ void generatePkgEgoData1()
     pkgBody->sObjectState.sPos.u4R       = 0.0;
     pkgBody->sObjectState.sPos.u1Type    = D_SP_COORDINATE_TYPE_GEO;
 
+    pkgBody->sObjectState.u8RoadId       = 1;
 
     pkgBody->u4LightMask                 = 0;
-
-    pkgBody->u4initSpeed                 = 10;
 
     //如果左转向灯亮
     if (bLeftLightStatus)
@@ -538,14 +610,14 @@ void generateMsg()
     else //发送其他pkg
     {
         // 非控制在环
+        // generatePkgEgoData2();
+
+        // 控制在环 动力学挂载外部
         generatePkgEgoData1();
 
         // 控制在环，动力学挂载内部
         // generatePkgEgoData();
         // generatePkgDriverCtrl();
-
-        // // //生成csv数据
-        // generatePkgCsvData();
     }
 
     //生成D_SP_PKG_ID_END_FRAME
@@ -568,6 +640,7 @@ void generateMsg()
  */
 void parsePackage(char *pkgBuff, unsigned long int size)
 {
+    cout << "Message received and parsed." << endl;
     if (nullptr == pkgBuff)
     {
         return;
@@ -612,9 +685,14 @@ void parsePackage(char *pkgBuff, unsigned long int size)
             {
                 memcpy( &mOwnObject, pkgData, sizeof( S_SP_MIL_EGO_STATE ) );
                 pkgData = (S_SP_MIL_EGO_STATE *)((char *)pkgData + pkgHead->u4ElementSize);
+                cout << "mOwnO  x: " <<  mOwnObject.sObjectState.sSpeed.u8X << endl;
+                cout << "mOwnO  y: " <<  mOwnObject.sObjectState.sSpeed.u8Y << endl;
+
+                cout << " initspeed = " << mOwnObject.u4initSpeed << endl;
+                cout << " ulobjQUAN = " << mOwnObject.u4SteerAngle << endl;
             }
 
-            //更新主车初速度
+            //更新主车初速
             if (objData.isVeloInit == false)
             {
                 objData.velo = sqrt(mOwnObject.sObjectState.sSpeed.u8X * mOwnObject.sObjectState.sSpeed.u8X + mOwnObject.sObjectState.sSpeed.u8Y * mOwnObject.sObjectState.sSpeed.u8Y);
@@ -702,12 +780,16 @@ int main(int argc, char **argv)
 
     bool initSocketRet = msgReceiver.initSocket(8000); //socket初始化，返回是否成功
 
-    if (!initSocketRet)
+    if (initSocketRet) 
     {
+        cout << "Socket initialized successfully." << endl;
+    } 
+    else 
+    {
+        cout << "Failed to initialize socket." << endl;
         return 1;
     }
 
-    // reset the information about the nearest and own object
     memset( &(objData.mNearestObject), 0, sizeof( S_SP_MIL_OBJECT_STATE ) );
     memset( &(objData.mOwnObject), 0, sizeof( S_SP_MIL_EGO_STATE ) );
     objData.velo = 0.0;
